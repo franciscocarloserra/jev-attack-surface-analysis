@@ -1,4 +1,4 @@
-# jev Attack Surface Analysis
+# JEV Attack Surface Analysis
 
 Point it at a Python repo and a budget in dollars. You get a ranked list of the places an
 attacker would look first, down to the suspicious line, ready to hand to a human or an LLM
