@@ -282,7 +282,8 @@ async function refreshRuns(keepRepo) {
   const list = await fetch('/results').then(r => r.json()).catch(() => null)
     || await fetch('examples/index.json').then(r => r.json()).then(l => { staticMode(); return l; });
   savedRuns = list.runs;
-  const current = keepRepo || $('repo').value || list.repos[0];
+  const DEFAULT_REPO = new URLSearchParams(location.search).get('repo') || 'pygoat';
+  const current = keepRepo || $('repo').value || (list.repos.includes(DEFAULT_REPO) ? DEFAULT_REPO : list.repos[0]);
   $('repo').innerHTML = list.repos.map(r => `<option ${r === current ? 'selected' : ''}>${esc(r)}</option>`).join('');
   fillRunPicker();
 }

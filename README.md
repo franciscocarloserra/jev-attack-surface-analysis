@@ -1,99 +1,103 @@
 # JEV Attack Surface Analysis
 
+Finds the places in a backend codebase where an attacker would look first, down to the
+suspicious line, for about one cent per repo.
+
 ![JEV Attack Surface Analysis on PyGoat](docs/screenshot.png)
 
-**Browse the examples:** https://franciscocarloserra.github.io/jev-attack-surface-analysis/ (PyGoat and NodeGoat runs, read-only)
+**Try it without installing anything:** https://franciscocarloserra.github.io/jev-attack-surface-analysis/
+(read-only results on PyGoat and NodeGoat).
 
-Point it at a backend repo (Python, JavaScript or TypeScript) and a budget in dollars. You get a ranked list of the places an
-attacker would look first, down to the suspicious line, ready to hand to a human or an LLM
-for validation.
+## What it does
 
-No LLM runs here. Plain Python reads the code and builds short texts; **jev**, a classifier
-that answers fixed questions with probabilities (~700 ms, about $42 per billion input tokens),
+You give it a repo (Python, JavaScript or TypeScript) and a budget in dollars. You get:
+
+- a **map** of the codebase, one block per file, colored by how suspicious it is;
+- a **ranked list of issues**, each pointing to the exact line;
+- a **copy button** (or `print_issues.py`) that hands that list to an AI agent, with the
+  instruction to *validate* each issue, not to fix it.
+
+No LLM is involved. Plain Python reads the code; **jev**, a classifier that answers fixed
+questions with probabilities in under a second and at about $42 per billion input tokens,
 does all the judging.
-
-On [PyGoat](https://github.com/adeyosemanputra/pygoat) (a deliberately vulnerable Django app,
-~150 functions) a full run costs about **one cent**. Measured on 2026-10-02: $0.0106 for the
-whole run; the top findings land on the planted SQL injection, `eval`, `pickle.loads` and
-SSRF lines.
-
-**Tested so far** only against two deliberately vulnerable apps:
-[PyGoat](https://github.com/adeyosemanputra/pygoat) (Python/Django) and
-[NodeGoat](https://github.com/OWASP/NodeGoat) (JavaScript/Express).
 
 ## How it works
 
-A magnifying glass that goes down one level at a time. At each level jev rates every unit
-and only the hot ones are opened at the next level, so the budget goes where the risk is.
+Like a magnifying glass: it looks at the whole repo coarsely, then zooms into the
+suspicious parts only. At each level jev rates every item, and only the hot ones are opened
+at the next level.
 
 ```
 repo
  │
- ▼  1. directory   jev reads names only         → drops tests, docs, migrations
+ ▼  1. directories   jev reads names only            → drops tests, docs, migrations
  │
- ▼  2. file        jev reads imports + signatures → exposure: none / low / medium / high
+ ▼  2. files         jev reads imports + signatures  → exposure: none / low / medium / high
  │
- ▼  3. function    jev reads the source          → unsafe input→sink / entry point / sink / sanitizer / neutral
+ ▼  3. functions     jev reads the code              → does external input reach a dangerous operation?
  │
- ▼  4. line        jev picks one of the function's own lines → where the vulnerability happens
+ ▼  4. lines         jev picks one of the function's lines → where the vulnerability happens
  │
  ▼
-scan_result.json ──► viewer ──► "Copy to clipboard" ──► your agent validates (does not fix)
+ranked issues ──► viewer / copy ──► your agent validates them
 ```
 
-- **Heat** (0..1) = jev's probabilities weighted by the heat of each category, defined in
-  `classification_levels.json`.
-- **Budget**: each level gets a share; what a level does not spend rolls over to the next.
-  Inside a level, units are processed hottest-parent first, so if money runs out, what is
-  skipped is the coldest part.
-- **Line level**: the answer options are the function's own lines, built at runtime. One call
-  per suspicious function.
+- **Heat** (0 to 1): how suspicious an item is, computed from jev's probabilities.
+- **Budget**: each level gets a share; what one level does not spend passes to the next.
+  The hottest items go first, so if money runs out, what is left out is the least suspicious.
 
-## Run
+## Results so far
+
+Tested only against two apps that are vulnerable on purpose (measured 2026-10-02):
+
+| Repo | Language | Cost | Top issues found |
+| --- | --- | --- | --- |
+| [PyGoat](https://github.com/adeyosemanputra/pygoat) | Python / Django | $0.010 | SQL injection, `eval`, `pickle.loads`, SSRF |
+| [NodeGoat](https://github.com/OWASP/NodeGoat) | JavaScript / Express | $0.007 | `eval` on request body, open redirect, SSRF, NoSQL `$where` injection |
+
+## Run it
+
+You need a TypeSafe API key for jev.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-source ~/.secrets.sh                       # TYPESAFE_API_KEY
-python3 viewer_server.py                    # http://localhost:7801/heatmap_viewer.html
+export TYPESAFE_API_KEY=...
+git clone --depth 1 https://github.com/adeyosemanputra/pygoat repos/pygoat
+
+python3 viewer_server.py        # open http://localhost:7801/heatmap_viewer.html
 ```
 
-In the viewer: choose a repo under `repos/` (and a saved run of it), a budget (max $0.05 per run, set in the JSON) and
-press **Run analysis**. Or from the shell:
+In the viewer pick the repo, set a budget (max $0.05 per run) and press **Run analysis**.
+From the shell instead:
 
 ```bash
-git clone --depth 1 https://github.com/adeyosemanputra/pygoat repos/pygoat
-git clone --depth 1 https://github.com/OWASP/NodeGoat repos/nodegoat
 .venv/bin/python attack_surface_scan.py repos/pygoat --budget 0.03
+python3 print_issues.py examples/pygoat/scan_result.json --top 10
 ```
 
-Each run writes `examples/<repo>/scan_result.json` (latest) and keeps a copy in
-`examples/<repo>/runs/<run id>.json`. Every result carries `run`: id, timestamp, scanner
-version (`git describe`) and a hash of `classification_levels.json`, so runs can be compared.
+Every run is saved in `examples/<repo>/runs/<run id>.json` (with date, scanner version and
+settings hash) and the latest one in `examples/<repo>/scan_result.json`.
+Agents: see `AGENTS.md` for the commands and the result format.
 
 ## Files
 
-| File | Role |
+| File | What it is |
 | --- | --- |
-| `classification_levels.json` | languages (parsing rules), questions, categories, heat weights, thresholds, budget shares, prices, agent instruction |
-| `attack_surface_scan.py` | engine: extract units, build jev input, spend budget, write result |
-| `viewer_server.py` | serves the viewer and starts runs |
-| `print_issues.py` | prints the issue list for an agent (same text as the copy button) |
-| `AGENTS.md` | how an agent runs the scan and parses the result |
-| `heatmap_viewer.html` | file map + issue list + code with the suspected line |
-| `examples/` | raw results per target codebase |
-| `repos/` | cloned target codebases (git-ignored) |
+| `attack_surface_scan.py` | the scanner |
+| `classification_levels.json` | every setting: questions to jev, categories, thresholds, budget shares, languages |
+| `heatmap_viewer.html` + `viewer_server.py` | the viewer, and the small server that lets it start runs |
+| `print_issues.py` | issue list as text, for agents |
+| `examples/` | saved runs |
 
-## Extend
+## Adapt it
 
-- **Change what is asked**: edit a level's question, categories or threshold in `classification_levels.json`.
-- **Add a level** (classes, HTTP routes…): write `extract_<unit>(repo, parent_units)` in
-  `attack_surface_scan.py`, register it in `UNIT_EXTRACTORS`, add a level with that `unit` to the JSON.
-- **Calibrate cost**: each level in the result reports `measured_over_estimated_tokens`;
-  adjust `estimate.chars_per_token` until it is close to 1.
+- **Ask different questions** or change thresholds: edit `classification_levels.json`.
+- **Add a language**: add an entry to `languages` in the same file (file extensions and
+  the parser's names for imports, functions and classes).
+- **Add a level** (e.g. HTTP routes): write one `extract_<unit>` function in
+  `attack_surface_scan.py`, register it in `UNIT_EXTRACTORS` and add the level to the JSON.
 
 ## Limits
 
-- Python, JavaScript and TypeScript (tree-sitter). Another language = one entry in `languages`
-  in `classification_levels.json` naming its import, function and class node types.
-- Each function is judged alone: a vulnerability split across two functions can be missed.
-- Heat is a ranking for review, not a verdict.
+- It ranks candidates for review; it does not prove a vulnerability exists.
+- Each function is judged on its own, so a flaw spread across several functions can be missed.
