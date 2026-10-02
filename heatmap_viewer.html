@@ -88,7 +88,7 @@
     <button id="showAll" style="right:16px">show all</button>
     <div id="legend">
   <b>Map</b>: most suspicious first (top-left). One block per file, area = lines of code, color = heat (pale 0 → dark red 1).
-  By default only suspected files are shown; "show all" adds the files jev did not flag (grey).<br><br>
+  By default only suspected files are shown; "show all" adds the files jev did not flag (grey). Click a file to filter its issues; click it again or press Esc to see all.<br><br>
   <b>Heat</b>: jev's probabilities weighted by the heat of each category in <code>classification_levels.json</code>.<br><br>
   <b>Code view</b>: shading = probability jev assigns to that line as the place where the vulnerability happens; highlighted = the line jev suspects most.
 </div>
@@ -155,7 +155,7 @@ function drawMap() {
     box.style.color = ink(f.heat);
     box.innerHTML = `<b>${esc(f.path.split('/').pop())}</b><br>${issues ? `${issues} issue${issues > 1 ? 's' : ''}` : 'no issues'}
       <br><span style="opacity:.75;font-size:11px">${esc(f.path.split('/').slice(0, -1).join('/'))}</span>`;
-    box.onclick = () => { selectedFile = f.path; selectedFunction = null; drawMap(); drawSide(); };
+    box.onclick = () => { if (selectedFile === f.path && !selectedFunction) return clearSelection(); selectedFile = f.path; selectedFunction = null; drawMap(); drawSide(); };
     map.appendChild(box);
   }
 }
@@ -189,7 +189,7 @@ function findingHtml(f, expanded) {
 // compact text for an LLM reviewer: only functions that passed the function level, hottest first
 function issuesForAgent(fns) {
   const lines = [agentInstructions, `Repo: ${result.repo}`, ''];
-  fns.filter(f => f.passed).forEach((f, i) => {
+  fns.forEach((f, i) => {
     const t = topLine(f);
     lines.push(`${i + 1}. ${f.path}:${t ? t.line : f.line} ${f.name}() [${topCategory(f)}, heat ${f.heat.toFixed(2)}]` +
       (t ? `\n   ${t.code}` : ''));
@@ -219,29 +219,31 @@ function codeView(fn) {
   }).join('') + '</div>';
 }
 
+const COPY_ICON = '<svg viewBox="0 0 24 24" width="13" height="13" style="vertical-align:-2px;margin-right:5px" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>';
+
+function clearSelection() { selectedFunction = null; selectedFile = null; drawMap(); drawSide(); }
+
+// side panel = breadcrumbs, then "N issues shown" + copy button (copies exactly what is shown), then content
 function drawSide() {
-  const fns = nodesOf('function').filter(f => showAll || f.passed).sort((a, b) => b.heat - a.heat);
-  const side = $('side');
+  const all = nodesOf('function').filter(f => showAll || f.passed).sort((a, b) => b.heat - a.heat);
+  const file = selectedFunction ? selectedFunction.path : selectedFile;
+  const shown = selectedFunction ? [selectedFunction] : file ? all.filter(f => f.path === file) : all;
+  const crumbs = [`<a id="toTop">all issues</a>`];
+  if (file) crumbs.push(selectedFunction ? `<a id="toFile">${esc(file)}</a>` : esc(file));
+  if (selectedFunction) crumbs.push(esc(selectedFunction.name));
+  $('side').innerHTML = `<div class="crumbs">${crumbs.join(' › ')}</div>
+    <h2 style="justify-content:space-between">${shown.length} issue${shown.length === 1 ? '' : 's'}
+      <button id="copyIssues" title="copies the ${shown.length} issues shown + validate-only instruction">${COPY_ICON}Copy to clipboard</button></h2>
+    <div id="content"></div>`;
+  $('toTop').onclick = clearSelection;
+  if ($('toFile')) $('toFile').onclick = () => { selectedFunction = null; drawSide(); };
+  $('copyIssues').onclick = () => navigator.clipboard.writeText(issuesForAgent(shown)).then(() => $('copyIssues').lastChild.textContent = 'Copied');
   if (selectedFunction) {
-    const f = selectedFunction;
-    side.innerHTML = `<div class="crumbs"><a id="toTop">issues</a> › <a id="toFile">${esc(f.path)}</a> › ${esc(f.name)}</div>
-      ${findingHtml(f, false)}
-      <h2>Where jev places the vulnerability</h2>${codeView(f)}`;
-    $('toTop').onclick = () => { selectedFunction = null; selectedFile = null; drawMap(); drawSide(); };
-    $('toFile').onclick = () => { selectedFunction = null; drawSide(); };
-  } else if (selectedFile) {
-    const file = nodesOf('file').find(n => n.path === selectedFile);
-    side.innerHTML = `<div class="crumbs"><a id="back">issues</a> › ${esc(selectedFile)}</div>
-<h2>Functions in this file</h2><div id="fnList"></div>`;
-    const inFile = fns.filter(f => f.path === selectedFile);
-    inFile.length ? functionList(inFile, $('fnList')) : $('fnList').innerHTML = '<div class="more">not analysed at function level</div>';
-    $('back').onclick = () => { selectedFile = null; drawMap(); drawSide(); };
+    $('content').innerHTML = `${findingHtml(selectedFunction, false)}<h2>Where jev places the vulnerability</h2>${codeView(selectedFunction)}`;
+  } else if (shown.length) {
+    functionList(shown, $('content'));
   } else {
-    side.innerHTML = `<h2 style="justify-content:space-between">Issues (${fns.length})
-      <button id="copyIssues" title="issue list + validate-only instruction, for your agent"><svg viewBox="0 0 24 24" width="13" height="13" style="vertical-align:-2px;margin-right:5px" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>Copy to clipboard</button></h2>
-      <div id="fnList"></div>`;
-    $('copyIssues').onclick = () => navigator.clipboard.writeText(issuesForAgent(fns)).then(() => $('copyIssues').lastChild.textContent = 'Copied');
-    functionList(fns, $('fnList'));
+    $('content').innerHTML = '<div class="more">no issues in this file</div>';
   }
 }
 
@@ -271,6 +273,8 @@ $('run').onclick = async () => {
   }, 2000);
 };
 
+document.addEventListener('keydown', e => { if (e.key === 'Escape') clearSelection(); });
+$('map').onclick = e => { if (e.target.id === 'map') clearSelection(); };
 window.onresize = () => result && drawMap();
 load(new URLSearchParams(location.search).get('file') || resultFileFor($('repo').value));
 </script>

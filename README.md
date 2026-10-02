@@ -66,6 +66,8 @@ tokens used) and `progress.log`.
 | `classification_levels.json` | questions, categories, heat weights, thresholds, budget shares, prices, agent instruction |
 | `attack_surface_scan.py` | engine: extract units, build jev input, spend budget, write result |
 | `viewer_server.py` | serves the viewer and starts runs |
+| `print_issues.py` | prints the issue list for an agent (same text as the copy button) |
+| `AGENTS.md` | how an agent runs the scan and parses the result |
 | `heatmap_viewer.html` | file map + issue list + code with the suspected line |
 | `examples/` | raw results per target codebase |
 | `repos/` | cloned target codebases (git-ignored) |
