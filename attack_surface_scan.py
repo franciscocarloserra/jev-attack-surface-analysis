@@ -1,20 +1,23 @@
-"""Attack surface heatmap of a Python codebase, classified top-down by jev.
+"""Attack surface heatmap of a backend codebase (Python, JavaScript, TypeScript), classified top-down by jev.
 
 Usage:
     python attack_surface_scan.py <repo_path> --budget 0.05
 
-Levels, questions and thresholds live in classification_levels.json.
+Levels, questions, thresholds and per-language parsing rules live in classification_levels.json.
 This file only walks the repo, builds the text sent to jev, spends the budget
 hottest-first and writes scan_result.json after every batch.
 """
 import argparse
-import ast
+import hashlib
 import json
 import os
+import subprocess
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+from tree_sitter_language_pack import get_parser
 
 JEV_URL = "https://api.typesafe.ai/v1/systemone"
 JEV_MODEL = "jev-latest"
@@ -23,54 +26,55 @@ HERE = Path(__file__).parent
 
 # ---------- unit extractors: repo -> list of units (one per thing jev classifies) ----------
 
-def extract_directories(repo, parent_units):
-    """Every directory that directly contains .py files."""
+def extract_directories(repo, parent_units, config):
+    """Every directory that directly contains source files."""
     units = []
     for dirpath, dirnames, filenames in os.walk(repo):
-        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
-        py_files = sorted(f for f in filenames if f.endswith(".py"))
-        if not py_files:
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in config["skip_directories"])
+        source_files = sorted(f for f in filenames if language_of(f, config))
+        if not source_files:
             continue
         rel = os.path.relpath(dirpath, repo)
-        state = f"directory: {rel}\nsubdirectories: {', '.join(dirnames) or '-'}\npython files: {', '.join(py_files)}"
-        size = sum(len((Path(dirpath) / f).read_text(errors="replace").splitlines()) for f in py_files)
+        state = f"directory: {rel}\nsubdirectories: {', '.join(dirnames) or '-'}\nsource files: {', '.join(source_files)}"
+        size = sum(len((Path(dirpath) / f).read_text(errors="replace").splitlines()) for f in source_files)
         units.append({"path": rel, "name": rel, "line": None, "parent_heat": 1.0, "state": state, "size": size})
     return units
 
 
-def extract_files(repo, parent_units):
-    """Every .py file inside a directory that passed the previous level: imports + signatures."""
+def extract_files(repo, parent_units, config):
+    """Every source file inside a directory that passed the previous level: imports + signatures."""
     units = []
     for parent in parent_units:
         directory = Path(repo) / parent["path"]
-        for file in sorted(directory.glob("*.py")):
+        for file in sorted(f for f in directory.iterdir() if f.is_file() and language_of(f.name, config)):
             rel = str(file.relative_to(repo))
-            tree = parse_python(file)
-            if tree is None:
-                continue
-            state = f"file: {rel}\nimports: {', '.join(list_imports(tree)) or '-'}\ndefinitions:\n" + "\n".join(list_signatures(tree))
-            size = len(file.read_text(errors="replace").splitlines())
-            units.append({"path": rel, "name": rel, "line": None, "parent_heat": parent["heat"], "state": state, "size": size})
+            parsed = parse_file(file, config)
+            state = (f"file: {rel}\nimports: {', '.join(list_imports(parsed)) or '-'}\ndefinitions:\n"
+                     + "\n".join(list_signatures(parsed)))
+            units.append({"path": rel, "name": rel, "line": None, "parent_heat": parent["heat"],
+                          "state": state, "size": parsed["source"].count("\n") + 1})
     return units
 
 
-def extract_functions(repo, parent_units):
+def extract_functions(repo, parent_units, config):
     """Every function and method inside a file that passed the previous level: full source."""
     units = []
     for parent in parent_units:
-        file = Path(repo) / parent["path"]
-        source = file.read_text(errors="replace")
-        tree = parse_python(file)
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                body = ast.get_source_segment(source, node) or ""
-                state = f"file: {parent['path']}\nimports: {', '.join(list_imports(tree))}\n\n{body}"
-                units.append({"path": parent["path"], "name": node.name, "line": node.lineno,
-                              "parent_heat": parent["heat"], "state": state, "source": body, "size": len(body.splitlines())})
+        parsed = parse_file(Path(repo) / parent["path"], config)
+        imports = ", ".join(list_imports(parsed))
+        for node in walk(parsed["root"]):
+            if node.type not in parsed["rules"]["function_nodes"]:
+                continue
+            body = text_of(node, parsed)
+            if body.count("\n") + 1 < config["min_function_lines"]:
+                continue
+            state = f"file: {parent['path']}\nimports: {imports}\n\n{body}"
+            units.append({"path": parent["path"], "name": function_name(node, parsed), "line": node.start_point[0] + 1,
+                          "parent_heat": parent["heat"], "state": state, "source": body, "size": body.count("\n") + 1})
     return units
 
 
-def extract_lines(repo, parent_units):
+def extract_lines(repo, parent_units, config):
     """One unit per hot function: jev picks which of its lines is the vulnerable one.
     The answer options are the function's own lines, built here at runtime."""
     units = []
@@ -78,7 +82,7 @@ def extract_lines(repo, parent_units):
         criteria = {}
         for offset, text in enumerate(parent["source"].splitlines()):
             code = text.strip()
-            if code and not code.startswith("#"):
+            if code and not code.startswith(("#", "//", "/*", "*")):
                 criteria[f"line {parent['line'] + offset}"] = code[:200]
         units.append({"path": parent["path"], "name": parent["name"], "line": parent["line"],
                       "parent_heat": parent["heat"], "state": parent["state"], "criteria": criteria})
@@ -93,32 +97,73 @@ UNIT_EXTRACTORS = {
 }
 
 
-def parse_python(file):
-    try:
-        return ast.parse(Path(file).read_text(errors="replace"))
-    except SyntaxError:
+# ---------- parsing (tree-sitter, rules per language in classification_levels.json) ----------
+
+def language_of(filename, config):
+    if filename.endswith(tuple(config["skip_file_suffixes"])):
         return None
+    for language, rules in config["languages"].items():
+        if filename.endswith(tuple(rules["extensions"])):
+            return language
+    return None
 
 
-def list_imports(tree):
-    names = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            names += [a.name for a in node.names]
-        elif isinstance(node, ast.ImportFrom):
-            names += [f"{node.module}.{a.name}" for a in node.names]
-    return names
+def parse_file(file, config):
+    language = language_of(Path(file).name, config)
+    source = Path(file).read_bytes()
+    root = get_parser(language).parse(source).root_node
+    return {"root": root, "source": source.decode(errors="replace"), "bytes": source, "rules": config["languages"][language]}
 
 
-def list_signatures(tree):
-    lines = []
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            decorators = "".join(f"@{ast.unparse(d)} " for d in node.decorator_list)
-            args = f"({ast.unparse(node.args)})" if not isinstance(node, ast.ClassDef) else ""
-            kind = "class" if isinstance(node, ast.ClassDef) else "def"
-            lines.append(f"{decorators}{kind} {node.name}{args}")
-    return lines
+def walk(node):
+    stack = [node]
+    while stack:
+        node = stack.pop()
+        yield node
+        stack.extend(reversed(node.children))
+
+
+def text_of(node, parsed):
+    return parsed["bytes"][node.start_byte:node.end_byte].decode(errors="replace")
+
+
+def first_line(node, parsed, max_chars=160):
+    return text_of(node, parsed).split("\n")[0].strip()[:max_chars]
+
+
+def list_imports(parsed):
+    """Import statements, plus calls like require("x") for languages that import through a function."""
+    imports = []
+    for node in walk(parsed["root"]):
+        if node.type in parsed["rules"]["import_nodes"]:
+            imports.append(first_line(node, parsed))
+        elif node.type == "call_expression":
+            callee = node.child_by_field_name("function")
+            if callee is not None and text_of(callee, parsed) in parsed["rules"].get("import_call_functions", []):
+                imports.append(first_line(node, parsed))
+    return imports
+
+
+def list_signatures(parsed):
+    rules = parsed["rules"]
+    return [first_line(n, parsed) for n in walk(parsed["root"]) if n.type in rules["function_nodes"] + rules["class_nodes"]]
+
+
+def function_name(node, parsed):
+    """Declared name, or the name it is assigned to (const f = () => ..., this.handle = function ..., {key: fn})."""
+    name = node.child_by_field_name("name")
+    if name is not None:
+        return text_of(name, parsed)
+    parent = node.parent
+    for field in ("name", "left", "key"):
+        target = parent.child_by_field_name(field) if parent is not None else None
+        if target is not None and target != node:
+            return text_of(target, parsed)[:60]
+    if parent is not None and parent.type == "arguments":  # callback: name it after the call it is passed to
+        callee = parent.parent.child_by_field_name("function")
+        if callee is not None:
+            return f"{text_of(callee, parsed)[:50]}(callback)"
+    return "anonymous"
 
 
 # ---------- jev ----------
@@ -186,8 +231,25 @@ def cost_usd(usage, config):
 
 # ---------- main loop ----------
 
-def scan(repo, budget_usd, config, out_path):
-    result = {"repo": str(repo), "budget_usd": budget_usd, "spent_usd": 0.0, "levels": [], "nodes": []}
+def run_metadata(levels_path):
+    """Identifies a run: when, which scanner version, which levels file (hash), so runs can be compared."""
+    tool_version = subprocess.run(["git", "describe", "--tags", "--always", "--dirty"], cwd=HERE,
+                                  capture_output=True, text=True).stdout.strip() or "unknown"
+    return {"id": time.strftime("%Y%m%d-%H%M%S"), "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "tool_version": tool_version,
+            "levels_sha256": hashlib.sha256(Path(levels_path).read_bytes()).hexdigest()[:12]}
+
+
+def write_result(result, out_path):
+    """Latest run in scan_result.json, every run kept in runs/<run id>.json."""
+    text = json.dumps(result, indent=1)
+    out_path.write_text(text)
+    (out_path.parent / "runs").mkdir(exist_ok=True)
+    (out_path.parent / "runs" / f"{result['run']['id']}.json").write_text(text)
+
+
+def scan(repo, budget_usd, config, out_path, run):
+    result = {"repo": str(repo), "run": run, "budget_usd": budget_usd, "spent_usd": 0.0, "levels": [], "nodes": []}
     usd_per_token = config["pricing"]["usd_per_input_token"]
     log = open(out_path.parent / "progress.log", "w")
     passed_units = []
@@ -196,7 +258,7 @@ def scan(repo, budget_usd, config, out_path):
     for level in config["levels"]:
         level_budget = budget_usd * level["budget_share"] + unspent_from_previous_levels
         level_spent = 0.0
-        units = UNIT_EXTRACTORS[level["unit"]](repo, passed_units)
+        units = UNIT_EXTRACTORS[level["unit"]](repo, passed_units, config)
         units.sort(key=lambda u: -u["parent_heat"])  # hottest parents first
         classified = []
 
@@ -221,7 +283,7 @@ def scan(repo, budget_usd, config, out_path):
                 result["nodes"].append(node)
                 classified.append(unit)
             result["spent_usd"] = round(sum(l["spent_usd"] for l in result["levels"]) + level_spent, 6)
-            out_path.write_text(json.dumps(result, indent=1))
+            write_result(result, out_path)
             print(f"{level['name']}: {len(classified)}/{len(units)} spent ${level_spent:.5f} of ${level_budget:.5f}", file=log, flush=True)
 
         passed_units = [u for u in classified if u["passed"]]
@@ -232,7 +294,7 @@ def scan(repo, budget_usd, config, out_path):
                                  "budget_usd": round(level_budget, 6),
                                  "measured_over_estimated_tokens": round(measured / estimated, 3) if estimated else None})
         unspent_from_previous_levels = level_budget - level_spent
-        out_path.write_text(json.dumps(result, indent=1))
+        write_result(result, out_path)
         print(json.dumps(result["levels"][-1]))
 
     print(f"spent ${result['spent_usd']:.5f} of ${budget_usd} -> {out_path}")
@@ -247,4 +309,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     out = Path(args.out or HERE / "examples" / Path(args.repo).resolve().name / "scan_result.json")
     out.parent.mkdir(parents=True, exist_ok=True)
-    scan(Path(args.repo), args.budget, json.loads(Path(args.levels).read_text()), out)
+    scan(Path(args.repo), args.budget, json.loads(Path(args.levels).read_text()), out, run_metadata(args.levels))

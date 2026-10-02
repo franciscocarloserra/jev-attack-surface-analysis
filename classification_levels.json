@@ -12,6 +12,102 @@
   },
   "parallel_requests": 8,
   "max_state_chars": 12000,
+  "skip_directories": [
+    "node_modules",
+    "vendor",
+    "dist",
+    "build",
+    "__pycache__"
+  ],
+  "skip_file_suffixes": [
+    ".min.js",
+    ".d.ts",
+    ".bundle.js"
+  ],
+  "min_function_lines": 3,
+  "languages": {
+    "python": {
+      "extensions": [
+        ".py"
+      ],
+      "import_nodes": [
+        "import_statement",
+        "import_from_statement"
+      ],
+      "function_nodes": [
+        "function_definition"
+      ],
+      "class_nodes": [
+        "class_definition"
+      ]
+    },
+    "javascript": {
+      "extensions": [
+        ".js",
+        ".mjs",
+        ".cjs",
+        ".jsx"
+      ],
+      "import_nodes": [
+        "import_statement"
+      ],
+      "import_call_functions": [
+        "require"
+      ],
+      "function_nodes": [
+        "function_declaration",
+        "function_expression",
+        "arrow_function",
+        "method_definition",
+        "generator_function_declaration"
+      ],
+      "class_nodes": [
+        "class_declaration"
+      ]
+    },
+    "typescript": {
+      "extensions": [
+        ".ts"
+      ],
+      "import_nodes": [
+        "import_statement"
+      ],
+      "import_call_functions": [
+        "require"
+      ],
+      "function_nodes": [
+        "function_declaration",
+        "function_expression",
+        "arrow_function",
+        "method_definition",
+        "generator_function_declaration"
+      ],
+      "class_nodes": [
+        "class_declaration",
+        "interface_declaration"
+      ]
+    },
+    "tsx": {
+      "extensions": [
+        ".tsx"
+      ],
+      "import_nodes": [
+        "import_statement"
+      ],
+      "import_call_functions": [
+        "require"
+      ],
+      "function_nodes": [
+        "function_declaration",
+        "function_expression",
+        "arrow_function",
+        "method_definition"
+      ],
+      "class_nodes": [
+        "class_declaration"
+      ]
+    }
+  },
   "levels": [
     {
       "name": "directory",

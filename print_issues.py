@@ -22,11 +22,23 @@ def suspected_line(result, function_node):
     return None
 
 
+def drop_enclosing_duplicates(result, functions):
+    """Nested functions (JS handlers inside a constructor) point at the same line as their container:
+    keep only the smallest function per suspected line."""
+    best = {}
+    for f in functions:
+        line = suspected_line(result, f)
+        key = (f["path"], line["line"] if line else f"fn{f['line']}")
+        if key not in best or f["size"] < best[key]["size"]:
+            best[key] = f
+    return list(best.values())
+
+
 def issues_text(result, file=None, top=None):
     functions = [n for n in result["nodes"] if n["level"] == "function" and n["passed"]]
     if file:
         functions = [n for n in functions if n["path"] == file]
-    functions = sorted(functions, key=lambda n: -n["heat"])[:top]
+    functions = sorted(drop_enclosing_duplicates(result, functions), key=lambda n: -n["heat"])[:top]
     instructions = json.loads((HERE / "classification_levels.json").read_text())["agent_instructions"]
     lines = [instructions, f"Repo: {result['repo']}", ""]
     for i, f in enumerate(functions, 1):

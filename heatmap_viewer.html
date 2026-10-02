@@ -18,8 +18,9 @@
   #runStatus { flex-basis:100%; text-align:right; min-height:0; }
   #runStatus:empty { display:none; }
   label { color:var(--dim); font-size:13px; display:flex; gap:6px; align-items:center; }
+  select { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font:inherit; font-size:14px; }
   input { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px 10px; font:inherit; font-size:14px; }
-  #repo { width:190px; } #budget { width:76px; }
+  #budget { width:76px; }
   button { background:var(--btn); color:#fff; border:0; border-radius:6px; padding:7px 16px; cursor:pointer; font:inherit; font-size:14px; font-weight:650; }
   button:hover:not(:disabled) { background:var(--btn-hover); }
   button:disabled { opacity:.5; cursor:default; }
@@ -74,7 +75,8 @@
     </svg>
     <h1>JEV Attack Surface Analysis</h1></div>
   <div class="controls">
-  <label>repo <input id="repo" value="repos/pygoat" aria-label="repo path, relative to the experiment folder"></label>
+  <label>repo <select id="repo" aria-label="repo under repos/"></select></label>
+  <label>run <select id="runSel" aria-label="saved run of this repo, newest first"></select></label>
   <label>budget $ <input id="budget" value="0.03" aria-label="max USD for this run"></label>
   <button id="run">Run analysis</button>
     <span id="summary"></span>
@@ -151,7 +153,7 @@ function drawMap() {
     box.className = 'box' + (f.passed ? '' : ' pruned') + (selectedFile === f.path ? ' sel' : '');
     Object.assign(box.style, { left: c.x + 'px', top: c.y + 'px', width: c.w + 'px', height: c.h + 'px', background: color(f.heat) });
     box.title = f.path;
-    const issues = nodesOf('function').filter(fn => fn.path === f.path && fn.passed).length;
+    const issues = dropEnclosingDuplicates(nodesOf('function').filter(fn => fn.path === f.path && fn.passed)).length;
     box.style.color = ink(f.heat);
     box.innerHTML = `<b>${esc(f.path.split('/').pop())}</b><br>${issues ? `${issues} issue${issues > 1 ? 's' : ''}` : 'no issues'}
       <br><span style="opacity:.75;font-size:11px">${esc(f.path.split('/').slice(0, -1).join('/'))}</span>`;
@@ -224,8 +226,19 @@ const COPY_ICON = '<svg viewBox="0 0 24 24" width="13" height="13" style="vertic
 function clearSelection() { selectedFunction = null; selectedFile = null; drawMap(); drawSide(); }
 
 // side panel = breadcrumbs, then "N issues shown" + copy button (copies exactly what is shown), then content
+// nested functions (JS handlers inside a constructor) point at the same line as their container:
+// keep only the smallest function per suspected line
+function dropEnclosingDuplicates(fns) {
+  const best = new Map();
+  for (const f of fns) {
+    const t = topLine(f), key = f.path + ':' + (t ? t.line : 'fn' + f.line);
+    if (!best.has(key) || f.size < best.get(key).size) best.set(key, f);
+  }
+  return [...best.values()];
+}
+
 function drawSide() {
-  const all = nodesOf('function').filter(f => showAll || f.passed).sort((a, b) => b.heat - a.heat);
+  const all = dropEnclosingDuplicates(nodesOf('function').filter(f => showAll || f.passed)).sort((a, b) => b.heat - a.heat);
   const file = selectedFunction ? selectedFunction.path : selectedFile;
   const shown = selectedFunction ? [selectedFunction] : file ? all.filter(f => f.path === file) : all;
   const crumbs = [`<a id="toTop">all issues</a>`];
@@ -249,8 +262,9 @@ function drawSide() {
 
 function render(data) {
   result = data;
-  const suspects = nodesOf('function').filter(f => f.passed).length;
+  const suspects = dropEnclosingDuplicates(nodesOf('function').filter(f => f.passed)).length;
   $('summary').textContent = `${suspects} suspects · $${result.spent_usd.toFixed(4)} spent`;
+  $('summary').title = result.run ? `run ${result.run.id} · scanner ${result.run.tool_version} · levels ${result.run.levels_sha256}` : 'run without metadata';
   drawMap(); drawSide();
 }
 
@@ -258,10 +272,28 @@ function load(file) {
   return fetch(file + '?t=' + Date.now()).then(r => r.ok ? r.json() : null).then(d => d && render(d)).catch(() => {});
 }
 
-function resultFileFor(repo) { return `examples/${repo.replace(/\/$/, '').split('/').pop()}/scan_result.json`; }
+// repo + run pickers, filled from the server's list of saved runs (examples/<repo>/runs/<run id>.json)
+let savedRuns = {};
+async function refreshRuns(keepRepo) {
+  const list = await fetch('/results').then(r => r.json());
+  savedRuns = list.runs;
+  const current = keepRepo || $('repo').value || list.repos[0];
+  $('repo').innerHTML = list.repos.map(r => `<option ${r === current ? 'selected' : ''}>${esc(r)}</option>`).join('');
+  fillRunPicker();
+}
+function fillRunPicker() {
+  const runs = savedRuns[$('repo').value] || [];
+  $('runSel').innerHTML = runs.length ? runs.map(f => `<option value="${esc(f)}">${esc(f.split('/').pop().replace('.json', ''))}</option>`).join('')
+    : '<option value="">no runs yet</option>';
+  selectedFile = null; selectedFunction = null;
+  if (runs.length) load(runs[0]);
+  else { result = null; $('map').innerHTML = ''; $('summary').textContent = ''; $('side').innerHTML = '<div class="more">No runs for this repo yet. Press Run analysis.</div>'; }
+}
+$('repo').onchange = fillRunPicker;
+$('runSel').onchange = () => { selectedFile = null; selectedFunction = null; $('runSel').value && load($('runSel').value); };
 
 $('run').onclick = async () => {
-  const response = await fetch('/run', { method: 'POST', body: JSON.stringify({ repo: $('repo').value, budget: $('budget').value }) });
+  const response = await fetch('/run', { method: 'POST', body: JSON.stringify({ repo: 'repos/' + $('repo').value, budget: $('budget').value }) });
   const answer = await response.json();
   if (answer.error) { $('runStatus').textContent = answer.error; return; }
   $('run').disabled = true;
@@ -269,14 +301,14 @@ $('run').onclick = async () => {
     const status = await fetch('/run-status').then(r => r.json());
     $('runStatus').textContent = status.running ? status.progress || 'starting…' : 'done';
     await load(answer.result_file);
-    if (!status.running) { clearInterval(poll); $('run').disabled = false; }
+    if (!status.running) { clearInterval(poll); $('run').disabled = false; refreshRuns($('repo').value); }
   }, 2000);
 };
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape') clearSelection(); });
 $('map').onclick = e => { if (e.target.id === 'map') clearSelection(); };
 window.onresize = () => result && drawMap();
-load(new URLSearchParams(location.search).get('file') || resultFileFor($('repo').value));
+refreshRuns();
 </script>
 </body>
 </html>

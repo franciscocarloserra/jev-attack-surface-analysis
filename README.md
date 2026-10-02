@@ -2,7 +2,7 @@
 
 ![JEV Attack Surface Analysis on PyGoat](docs/screenshot.png)
 
-Point it at a Python repo and a budget in dollars. You get a ranked list of the places an
+Point it at a backend repo (Python, JavaScript or TypeScript) and a budget in dollars. You get a ranked list of the places an
 attacker would look first, down to the suspicious line, ready to hand to a human or an LLM
 for validation.
 
@@ -14,6 +14,10 @@ On [PyGoat](https://github.com/adeyosemanputra/pygoat) (a deliberately vulnerabl
 ~150 functions) a full run costs about **one cent**. Measured on 2026-10-02: $0.0106 for the
 whole run; the top findings land on the planted SQL injection, `eval`, `pickle.loads` and
 SSRF lines.
+
+**Tested so far** only against two deliberately vulnerable apps:
+[PyGoat](https://github.com/adeyosemanputra/pygoat) (Python/Django) and
+[NodeGoat](https://github.com/OWASP/NodeGoat) (JavaScript/Express).
 
 ## How it works
 
@@ -46,26 +50,29 @@ scan_result.json ──► viewer ──► "Copy to clipboard" ──► your a
 ## Run
 
 ```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 source ~/.secrets.sh                       # TYPESAFE_API_KEY
-python viewer_server.py                    # http://localhost:7801/heatmap_viewer.html
+python3 viewer_server.py                    # http://localhost:7801/heatmap_viewer.html
 ```
 
-In the viewer: choose a repo under `repos/`, a budget (max $0.05 per run, set in the JSON) and
+In the viewer: choose a repo under `repos/` (and a saved run of it), a budget (max $0.05 per run, set in the JSON) and
 press **Run analysis**. Or from the shell:
 
 ```bash
 git clone --depth 1 https://github.com/adeyosemanputra/pygoat repos/pygoat
-python attack_surface_scan.py repos/pygoat --budget 0.03
+git clone --depth 1 https://github.com/OWASP/NodeGoat repos/nodegoat
+.venv/bin/python attack_surface_scan.py repos/pygoat --budget 0.03
 ```
 
-Each run writes `examples/<repo>/scan_result.json` (every node with heat, jev's answer and
-tokens used) and `progress.log`.
+Each run writes `examples/<repo>/scan_result.json` (latest) and keeps a copy in
+`examples/<repo>/runs/<run id>.json`. Every result carries `run`: id, timestamp, scanner
+version (`git describe`) and a hash of `classification_levels.json`, so runs can be compared.
 
 ## Files
 
 | File | Role |
 | --- | --- |
-| `classification_levels.json` | questions, categories, heat weights, thresholds, budget shares, prices, agent instruction |
+| `classification_levels.json` | languages (parsing rules), questions, categories, heat weights, thresholds, budget shares, prices, agent instruction |
 | `attack_surface_scan.py` | engine: extract units, build jev input, spend budget, write result |
 | `viewer_server.py` | serves the viewer and starts runs |
 | `print_issues.py` | prints the issue list for an agent (same text as the copy button) |
@@ -84,6 +91,7 @@ tokens used) and `progress.log`.
 
 ## Limits
 
-- Python only (uses the standard `ast` module).
+- Python, JavaScript and TypeScript (tree-sitter). Another language = one entry in `languages`
+  in `classification_levels.json` naming its import, function and class node types.
 - Each function is judged alone: a vulnerability split across two functions can be missed.
 - Heat is a ranking for review, not a verdict.

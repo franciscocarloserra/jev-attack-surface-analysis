@@ -1,3 +1,4 @@
 repos/
 __pycache__/
 examples/*/progress.log
+.venv/
