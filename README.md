@@ -1,6 +1,6 @@
 # JEV Attack Surface Analysis
 
-Finds the places in a backend codebase where an attacker would look first, down to the
+Maps the attack surface of a backend codebase and flags likely vulnerabilities, down to the
 suspicious line, for about one cent per repo.
 
 ![JEV Attack Surface Analysis on PyGoat](docs/screenshot.png)
@@ -13,7 +13,8 @@ suspicious line, for about one cent per repo.
 You give it a repo (Python, JavaScript or TypeScript) and a budget in dollars. You get:
 
 - a **map** of the codebase, one block per file, colored by how suspicious it is;
-- a **ranked list of issues**, each pointing to the exact line;
+- a **ranked list of potential vulnerabilities**, each pointing to the exact line and typed
+  (e.g. user input reaching SQL, `eval`, a shell or an outbound request);
 - a **copy button** (or `print_issues.py`) that hands that list to an AI agent, with the
   instruction to *validate* each issue, not to fix it.
 
