@@ -1,0 +1,98 @@
+{
+  "agent_instructions": "Below are attack surface candidates ranked by a cheap classifier (jev). For each one, read the code and validate it: say whether it is a real vulnerability, false positive or unsure, with a one-line reason. Do NOT fix or modify any code.",
+  "max_run_budget_usd": 0.05,
+  "pricing": {
+    "usd_per_input_token": 4.2e-08,
+    "usd_per_output_token": 4.2e-08,
+    "_note": "input price from know-how/typesafe/AGENTS.md ($42 per 1B); output price not documented there, assumed equal"
+  },
+  "estimate": {
+    "chars_per_token": 3.1,
+    "question_overhead_tokens": 300
+  },
+  "parallel_requests": 8,
+  "max_state_chars": 12000,
+  "levels": [
+    {
+      "name": "directory",
+      "unit": "directory",
+      "budget_share": 0.1,
+      "pass_heat": 0.35,
+      "question": {
+        "type": "noul",
+        "instructions": "Does this directory contain application code that runs in production and handles external input (HTTP requests, user data, files, network) or sensitive resources (credentials, database, shell, filesystem)? Answer no for tests, migrations, docs, examples and static assets."
+      }
+    },
+    {
+      "name": "file",
+      "unit": "file",
+      "budget_share": 0.2,
+      "pass_heat": 0.4,
+      "question": {
+        "type": "score",
+        "instructions": "How exposed is this file to attackers? Consider whether it receives external input and whether it reaches dangerous operations (shell, SQL, deserialization, file access, authentication, crypto, outbound requests).",
+        "criteria": {
+          "none": {
+            "description": "no external input and no dangerous operations",
+            "heat": 0.0
+          },
+          "low": {
+            "description": "internal helpers or configuration with little exposure",
+            "heat": 0.3
+          },
+          "medium": {
+            "description": "handles input or touches sensitive resources, but not both",
+            "heat": 0.6
+          },
+          "high": {
+            "description": "external input flows into dangerous or security-critical operations",
+            "heat": 1.0
+          }
+        }
+      }
+    },
+    {
+      "name": "function",
+      "unit": "function",
+      "budget_share": 0.4,
+      "pass_heat": 0.5,
+      "question": {
+        "type": "choice",
+        "instructions": "What role does this function play in the attack surface?",
+        "criteria": {
+          "unsafe_input_to_sink": {
+            "description": "takes external input and passes it to a dangerous operation (shell, SQL, eval, pickle/yaml load, file path, outbound URL, auth decision) without proper validation",
+            "heat": 1.0
+          },
+          "entry_point": {
+            "description": "receives external input (request handler, view, API endpoint, CLI) but does not obviously misuse it",
+            "heat": 0.5
+          },
+          "dangerous_sink": {
+            "description": "performs a dangerous operation, input origin unclear",
+            "heat": 0.6
+          },
+          "sanitizer": {
+            "description": "validates, escapes or authorizes data",
+            "heat": 0.2
+          },
+          "neutral": {
+            "description": "no security relevance",
+            "heat": 0.0
+          }
+        }
+      }
+    },
+    {
+      "name": "line",
+      "unit": "line",
+      "budget_share": 0.3,
+      "pass_heat": 0.0,
+      "question": {
+        "type": "choice",
+        "criteria_from_unit": true,
+        "instructions": "Which line of this function is where the vulnerability happens: the line where untrusted input reaches a dangerous operation or a security check is missing?"
+      }
+    }
+  ]
+}

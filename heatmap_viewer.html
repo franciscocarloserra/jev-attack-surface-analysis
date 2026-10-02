@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jev Attack Surface Analysis</title>
+<style>
+  :root { --bg:#0f1216; --panel:#181c22; --panel2:#20252d; --text:#eef1f4; --dim:#a3acb7; --line:#2c333c; --accent:#6ea8ff; --btn:#1f6f43; --btn-hover:#258553; --hot:#ff6b6b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, sans-serif; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  header { padding:12px 20px; border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header { justify-content:space-between; }
+  header h1 { font-size:17px; margin:0; font-weight:650; letter-spacing:-.01em; }
+  .brand { display:flex; gap:10px; align-items:center; }
+  .mark { width:22px; height:22px; border-radius:5px; background:linear-gradient(135deg, hsl(50,85%,80%), hsl(25,85%,59%), hsl(0,85%,38%)); }
+  .tagline { color:var(--dim); font-size:12px; }
+  .controls { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  #runStatus { flex-basis:100%; text-align:right; min-height:0; }
+  #runStatus:empty { display:none; }
+  label { color:var(--dim); font-size:13px; display:flex; gap:6px; align-items:center; }
+  input { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px 10px; font:inherit; font-size:14px; }
+  #repo { width:190px; } #budget { width:76px; }
+  button { background:var(--btn); color:#fff; border:0; border-radius:6px; padding:7px 16px; cursor:pointer; font:inherit; font-size:14px; font-weight:650; }
+  button:hover:not(:disabled) { background:var(--btn-hover); }
+  button.ghost { background:var(--btn); color:#fff; border:0; padding:3px 10px; font-size:12px; font-weight:500; }
+  button:disabled { opacity:.5; cursor:default; }
+  #runStatus { color:var(--dim); font-size:13px; }
+  main { display:grid; grid-template-columns:minmax(0,3fr) minmax(0,2fr); height:calc(100vh - 110px); }
+  #map { position:relative; margin:16px; }
+  .box { position:absolute; overflow:hidden; border:1px solid var(--bg); border-radius:3px; font-size:12px; padding:3px 5px; cursor:pointer; color:#1a1010; font-weight:500; }
+  .box.dir { border:3px solid var(--bg); border-radius:6px; padding:0; color:var(--text); background:var(--panel); }
+  .box.dir > .label { position:absolute; top:1px; left:6px; font-weight:650; font-size:12px; color:var(--dim); }
+  .box.sel { outline:3px solid #fff; z-index:2; }
+  .box.pruned { background:var(--panel2) !important; color:var(--dim); }
+  aside { border-left:1px solid var(--line); padding:16px 20px 48px; overflow:auto; }
+  h2 { font-size:12px; color:var(--dim); font-weight:650; margin:16px 0 8px; text-transform:uppercase; letter-spacing:.06em; display:flex; align-items:center; gap:8px; }
+  .heat { min-width:42px; text-align:center; font-variant-numeric:tabular-nums; font-weight:700; border-radius:4px; padding:1px 6px; color:#1a1010; font-size:13px; margin-right:6px; }
+  .finding { padding:5px 8px; border-radius:6px; cursor:pointer; margin-bottom:3px; background:var(--panel); border:1px solid transparent; }
+  .finding.open { border-color:var(--line); background:var(--panel2); padding-bottom:8px; }
+  .frow { display:flex; align-items:center; gap:2px; white-space:nowrap; overflow:hidden; }
+  .frow b { overflow:hidden; text-overflow:ellipsis; }
+  .frow .where { margin:0 0 0 auto; padding-left:8px; }
+  .code.mini { margin-top:6px; font-size:12px; padding:4px 0; }
+  .code.mini .top::after { content:''; }
+  .full { display:inline-block; margin-top:6px; color:var(--accent); font-size:13px; }
+  .finding:hover { border-color:var(--line); background:var(--panel2); }
+  .finding .where { color:var(--dim); font-size:13px; margin-top:2px; }
+  .finding .snippet { font:13px ui-monospace, monospace; color:#ffc9c9; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:4px; }
+  .crumbs { font-size:13px; color:var(--dim); margin-bottom:10px; }
+  .crumbs a { color:var(--accent); cursor:pointer; }
+  .kind { display:inline-block; font-size:12px; padding:1px 8px; border-radius:10px; background:#3b2424; color:#ffc9c9; margin-left:6px; }
+  .more { color:var(--dim); cursor:pointer; padding:6px; font-size:13px; }
+  .code { font:13px/1.6 ui-monospace, monospace; background:var(--panel); border-radius:8px; padding:8px 0; overflow-x:auto; }
+  .code div { padding:0 10px; white-space:pre; }
+  .code .n { color:var(--dim); display:inline-block; width:48px; }
+  .code .p { color:var(--dim); display:inline-block; width:42px; }
+  .code .top { background:#7a1d1d !important; color:#fff; font-weight:700; border-left:4px solid var(--hot); }
+  .code .top::after { content:'  ◀ jev suspects this line'; color:#ffc9c9; font-weight:400; }
+  footer { position:fixed; bottom:0; left:0; right:0; padding:6px 20px; background:var(--panel); color:var(--dim); font-size:13px; border-top:1px solid var(--line); display:flex; gap:12px; align-items:center; }
+  #legend { display:none; position:fixed; bottom:40px; left:20px; max-width:480px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:12px 14px; font-size:13px; color:var(--text); }
+  @media (max-width:760px) { main { grid-template-columns:1fr; height:auto; } #map { height:60vh; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="mark" aria-hidden="true"></span>
+    <div><h1>jev Attack Surface Analysis</h1><div class="tagline">where an attacker would look first, ranked by a classifier</div></div></div>
+  <div class="controls">
+  <label>repo <input id="repo" value="repos/pygoat" aria-label="repo path, relative to the experiment folder"></label>
+  <label>budget $ <input id="budget" value="0.03" aria-label="max USD for this run"></label>
+  <button id="run">Run analysis</button>
+  </div>
+  <span id="runStatus"></span>
+</header>
+<main>
+  <div id="map"></div>
+  <aside id="side"><div class="more">No result yet. Pick a repo and press Run analysis.</div></aside>
+</main>
+<footer><button class="ghost" id="showAll">show all</button><button class="ghost" id="toggleLegend">legend</button><span id="summary">no result loaded</span></footer>
+<div id="legend">
+  <b>Map</b>: most suspicious first (top-left). One block per file, area = lines of code, color = heat (pale 0 → dark red 1).
+  By default only suspected files are shown; "show all" adds the files jev did not flag (grey).<br><br>
+  <b>Heat</b>: jev's probabilities weighted by the heat of each category in <code>classification_levels.json</code>.<br><br>
+  <b>Code view</b>: shading = probability jev assigns to that line as the place where the vulnerability happens; highlighted = the line jev suspects most.
+</div>
+<script>
+const ink = h => h > 0.7 ? '#fff' : '#1a1010';  // readable text on top of color(h)
+const color = h => `hsl(${50 - h * 50}, 85%, ${80 - h * 42}%)`;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const $ = id => document.getElementById(id);
+let agentInstructions = '';
+fetch('classification_levels.json').then(r => r.json()).then(c => agentInstructions = c.agent_instructions);
+let showAll = false;
+let result = null, selectedFile = null, selectedFunction = null;
+
+$('showAll').onclick = () => { showAll = !showAll; $('showAll').textContent = showAll ? 'show suspects only' : 'show all'; result && (drawMap(), drawSide()); };
+$('toggleLegend').onclick = () => $('legend').style.display = $('legend').style.display === 'block' ? 'none' : 'block';
+
+// ---------- squarified treemap: items [{size}] -> rects {x,y,w,h} ----------
+function squarify(items, x, y, w, h) {
+  const total = items.reduce((s, i) => s + i.size, 0) || 1;
+  const scaled = items.map(i => ({ item: i, area: i.size / total * w * h }));
+  const rects = [];
+  while (scaled.length) {
+    const short = Math.min(w, h);
+    let row = [], best = Infinity;
+    while (scaled.length) {
+      const trial = [...row, scaled[0]];
+      const sum = trial.reduce((s, r) => s + r.area, 0);
+      const worst = Math.max(...trial.map(r => Math.max(short * short * r.area / sum / sum, sum * sum / (short * short * r.area))));
+      if (worst > best) break;
+      best = worst; row = trial; scaled.shift();
+    }
+    const sum = row.reduce((s, r) => s + r.area, 0);
+    const thick = sum / short;
+    let offset = 0;
+    for (const r of row) {
+      const len = r.area / thick;
+      rects.push(w >= h ? { item: r.item, x, y: y + offset, w: thick, h: len } : { item: r.item, x: x + offset, y, w: len, h: thick });
+      offset += len;
+    }
+    if (w >= h) { x += thick; w -= thick; } else { y += thick; h -= thick; }
+  }
+  return rects;
+}
+
+function nodesOf(level) { return result.nodes.filter(n => n.level === level); }
+function lineNodeFor(fn) { return nodesOf('line').find(l => l.path === fn.path && l.line === fn.line); }
+
+// flat map: one block per file, hottest first (top-left), area = lines of code
+function drawMap() {
+  const map = $('map'); map.innerHTML = '';
+  const W = map.clientWidth, H = map.clientHeight || 500;
+  const files = nodesOf('file').filter(f => showAll || f.passed)
+    .map(f => ({ ...f, size: Math.max(f.size || 1, 1) })).sort((a, b) => b.heat - a.heat);
+  for (const c of squarify(files, 0, 0, W, H)) {
+    const f = c.item, box = document.createElement('div');
+    box.className = 'box' + (f.passed ? '' : ' pruned') + (selectedFile === f.path ? ' sel' : '');
+    Object.assign(box.style, { left: c.x + 'px', top: c.y + 'px', width: c.w + 'px', height: c.h + 'px', background: color(f.heat) });
+    box.title = f.path;
+    const issues = nodesOf('function').filter(fn => fn.path === f.path && fn.passed).length;
+    box.style.color = ink(f.heat);
+    box.innerHTML = `<b>${esc(f.path.split('/').pop())}</b><br>${issues ? `${issues} issue${issues > 1 ? 's' : ''}` : 'no issues'}
+      <br><span style="opacity:.75;font-size:11px">${esc(f.path.split('/').slice(0, -1).join('/'))}</span>`;
+    box.onclick = () => { selectedFile = f.path; selectedFunction = null; drawMap(); drawSide(); };
+    map.appendChild(box);
+  }
+}
+
+function rowHtml(node, label, key) {
+  return `<div class="row" data-key="${esc(key)}"><span class="heat" style="background:${color(node.heat)};color:${ink(node.heat)}">${node.heat.toFixed(2)}</span><span class="label2">${esc(label)}</span></div>`;
+}
+
+const topCategory = f => Object.entries(f.answer).sort((a, b) => b[1] - a[1])[0][0].replace(/_/g, ' ');
+function topLine(f) {
+  const l = lineNodeFor(f);
+  return l ? l.answer.reduce((a, b) => b.probability > a.probability ? b : a) : null;
+}
+const SNIPPET_CONTEXT_LINES = 2;  // lines shown above and below the suspected line when a finding is expanded
+
+// one compact line per finding; expanding it shows the suspected line with a little context
+function findingHtml(f, expanded) {
+  const t = topLine(f);
+  const row = `<div class="frow"><span class="heat" style="background:${color(f.heat)};color:${ink(f.heat)}">${f.heat.toFixed(2)}</span>
+    <b>${esc(f.name)}</b><span class="kind">${esc(topCategory(f))}</span>
+    <span class="where">${esc(f.path.split('/').pop())}:${t ? t.line : f.line}</span></div>`;
+  if (!expanded) return `<div class="finding">${row}</div>`;
+  const lines = lineNodeFor(f)?.answer || [];
+  const i = lines.findIndex(l => l === t);
+  const snippet = lines.slice(Math.max(0, i - SNIPPET_CONTEXT_LINES), i + SNIPPET_CONTEXT_LINES + 1).map(l =>
+    `<div class="${l === t ? 'top' : ''}"><span class="n">${l.line}</span>${esc(l.code)}</div>`).join('');
+  return `<div class="finding open">${row}<div class="where">${esc(f.path)}</div>
+    ${snippet ? `<div class="code mini">${snippet}</div>` : ''}<a class="full">full function ›</a></div>`;
+}
+
+// compact text for an LLM reviewer: only functions that passed the function level, hottest first
+function issuesForAgent(fns) {
+  const lines = [agentInstructions, `Repo: ${result.repo}`, ''];
+  fns.filter(f => f.passed).forEach((f, i) => {
+    const t = topLine(f);
+    lines.push(`${i + 1}. ${f.path}:${t ? t.line : f.line} ${f.name}() [${topCategory(f)}, heat ${f.heat.toFixed(2)}]` +
+      (t ? `\n   ${t.code}` : ''));
+  });
+  return lines.join('\n');
+}
+
+function functionList(fns, el) {
+  let open = null;
+  const draw = () => {
+    el.innerHTML = fns.map(f => findingHtml(f, f === open)).join('');
+    el.querySelectorAll('.finding').forEach((r, i) => r.onclick = e => {
+      if (e.target.classList.contains('full')) { selectedFunction = fns[i]; selectedFile = fns[i].path; drawMap(); drawSide(); return; }
+      open = open === fns[i] ? null : fns[i]; draw();
+    });
+  };
+  draw();
+}
+
+function codeView(fn) {
+  const lineNode = lineNodeFor(fn);
+  if (!lineNode) return `<div class="more">no line-level analysis (function below threshold or budget ran out)</div>`;
+  const max = Math.max(...lineNode.answer.map(l => l.probability));
+  return '<div class="code">' + lineNode.answer.map(l => {
+    const shade = `rgba(255,80,80,${(l.probability / max * 0.25).toFixed(2)})`;
+    return `<div class="${l.probability === max ? 'top' : ''}" style="background:${shade}"><span class="n">${l.line}</span>${esc(l.code)}</div>`;
+  }).join('') + '</div>';
+}
+
+function drawSide() {
+  const fns = nodesOf('function').filter(f => showAll || f.passed).sort((a, b) => b.heat - a.heat);
+  const side = $('side');
+  if (selectedFunction) {
+    const f = selectedFunction;
+    side.innerHTML = `<div class="crumbs"><a id="toTop">issues</a> › <a id="toFile">${esc(f.path)}</a> › ${esc(f.name)}</div>
+      ${findingHtml(f, false)}
+      <h2>Where jev places the vulnerability</h2>${codeView(f)}`;
+    $('toTop').onclick = () => { selectedFunction = null; selectedFile = null; drawMap(); drawSide(); };
+    $('toFile').onclick = () => { selectedFunction = null; drawSide(); };
+  } else if (selectedFile) {
+    const file = nodesOf('file').find(n => n.path === selectedFile);
+    side.innerHTML = `<div class="crumbs"><a id="back">issues</a> › ${esc(selectedFile)}</div>
+<h2>Functions in this file</h2><div id="fnList"></div>`;
+    const inFile = fns.filter(f => f.path === selectedFile);
+    inFile.length ? functionList(inFile, $('fnList')) : $('fnList').innerHTML = '<div class="more">not analysed at function level</div>';
+    $('back').onclick = () => { selectedFile = null; drawMap(); drawSide(); };
+  } else {
+    side.innerHTML = `<button id="copyIssues" style="width:100%;margin-bottom:8px">Copy to clipboard</button>
+      <h2>Issues (${fns.length})</h2><div id="fnList"></div>`;
+    $('copyIssues').onclick = () => navigator.clipboard.writeText(issuesForAgent(fns)).then(() => $('copyIssues').textContent = 'copied ✓');
+    functionList(fns, $('fnList'));
+  }
+}
+
+function render(data) {
+  result = data;
+  const suspects = nodesOf('function').filter(f => f.passed).length;
+  $('summary').textContent = `${suspects} suspects · $${result.spent_usd.toFixed(4)} spent`;
+  drawMap(); drawSide();
+}
+
+function load(file) {
+  return fetch(file + '?t=' + Date.now()).then(r => r.ok ? r.json() : null).then(d => d && render(d)).catch(() => {});
+}
+
+function resultFileFor(repo) { return `examples/${repo.replace(/\/$/, '').split('/').pop()}/scan_result.json`; }
+
+$('run').onclick = async () => {
+  const response = await fetch('/run', { method: 'POST', body: JSON.stringify({ repo: $('repo').value, budget: $('budget').value }) });
+  const answer = await response.json();
+  if (answer.error) { $('runStatus').textContent = answer.error; return; }
+  $('run').disabled = true;
+  const poll = setInterval(async () => {
+    const status = await fetch('/run-status').then(r => r.json());
+    $('runStatus').textContent = status.running ? status.progress || 'starting…' : 'done';
+    await load(answer.result_file);
+    if (!status.running) { clearInterval(poll); $('run').disabled = false; }
+  }, 2000);
+};
+
+window.onresize = () => result && drawMap();
+load(new URLSearchParams(location.search).get('file') || resultFileFor($('repo').value));
+</script>
+</body>
+</html>
