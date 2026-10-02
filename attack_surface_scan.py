@@ -248,6 +248,14 @@ def write_result(result, out_path):
     (out_path.parent / "runs" / f"{result['run']['id']}.json").write_text(text)
 
 
+def write_examples_index():
+    """examples/index.json lists every saved run, newest first: the viewer reads it when served statically (GitHub Pages)."""
+    runs = {}
+    for path in sorted(HERE.glob("examples/*/runs/*.json"), reverse=True):
+        runs.setdefault(path.parent.parent.name, []).append(str(path.relative_to(HERE)))
+    (HERE / "examples" / "index.json").write_text(json.dumps({"repos": sorted(runs), "runs": runs}, indent=1))
+
+
 def scan(repo, budget_usd, config, out_path, run):
     result = {"repo": str(repo), "run": run, "budget_usd": budget_usd, "spent_usd": 0.0, "levels": [], "nodes": []}
     usd_per_token = config["pricing"]["usd_per_input_token"]
@@ -297,6 +305,7 @@ def scan(repo, budget_usd, config, out_path, run):
         write_result(result, out_path)
         print(json.dumps(result["levels"][-1]))
 
+    write_examples_index()
     print(f"spent ${result['spent_usd']:.5f} of ${budget_usd} -> {out_path}")
 
 

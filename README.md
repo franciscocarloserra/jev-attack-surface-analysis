@@ -2,6 +2,8 @@
 
 ![JEV Attack Surface Analysis on PyGoat](docs/screenshot.png)
 
+**Browse the examples:** https://franciscocarloserra.github.io/jev-attack-surface-analysis/ (PyGoat and NodeGoat runs, read-only)
+
 Point it at a backend repo (Python, JavaScript or TypeScript) and a budget in dollars. You get a ranked list of the places an
 attacker would look first, down to the suspicious line, ready to hand to a human or an LLM
 for validation.

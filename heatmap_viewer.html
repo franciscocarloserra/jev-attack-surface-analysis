@@ -274,8 +274,13 @@ function load(file) {
 
 // repo + run pickers, filled from the server's list of saved runs (examples/<repo>/runs/<run id>.json)
 let savedRuns = {};
+function staticMode() {
+  for (const id of ['run', 'budget']) $(id).closest('label, button').style.display = 'none';
+}
 async function refreshRuns(keepRepo) {
-  const list = await fetch('/results').then(r => r.json());
+  // live server lists repos/ + runs; on a static host (GitHub Pages) fall back to examples/index.json and hide running
+  const list = await fetch('/results').then(r => r.json()).catch(() => null)
+    || await fetch('examples/index.json').then(r => r.json()).then(l => { staticMode(); return l; });
   savedRuns = list.runs;
   const current = keepRepo || $('repo').value || list.repos[0];
   $('repo').innerHTML = list.repos.map(r => `<option ${r === current ? 'selected' : ''}>${esc(r)}</option>`).join('');

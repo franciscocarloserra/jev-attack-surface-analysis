@@ -1,0 +1,14 @@
+{
+ "repos": [
+  "nodegoat",
+  "pygoat"
+ ],
+ "runs": {
+  "pygoat": [
+   "examples/pygoat/runs/20261002-075517.json"
+  ],
+  "nodegoat": [
+   "examples/nodegoat/runs/20261002-075508.json"
+  ]
+ }
+}
