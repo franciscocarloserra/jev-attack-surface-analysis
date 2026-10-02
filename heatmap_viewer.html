@@ -23,11 +23,10 @@
   #repo { width:190px; } #budget { width:76px; }
   button { background:var(--btn); color:#fff; border:0; border-radius:6px; padding:7px 16px; cursor:pointer; font:inherit; font-size:14px; font-weight:650; }
   button:hover:not(:disabled) { background:var(--btn-hover); }
-  button.ghost { background:var(--btn); color:#fff; border:0; padding:3px 10px; font-size:12px; font-weight:500; }
   button:disabled { opacity:.5; cursor:default; }
   #runStatus { color:var(--dim); font-size:13px; }
-  main { display:grid; grid-template-columns:minmax(0,3fr) minmax(0,2fr); height:calc(100vh - 110px); }
-  #map { position:relative; margin:16px; }
+  main { display:grid; grid-template-columns:minmax(0,3fr) minmax(0,2fr); height:calc(100vh - 80px); }
+  #map { position:absolute; inset:16px; }
   .box { position:absolute; overflow:hidden; border:1px solid var(--bg); border-radius:3px; font-size:12px; padding:3px 5px; cursor:pointer; color:#1a1010; font-weight:500; }
   .box.dir { border:3px solid var(--bg); border-radius:6px; padding:0; color:var(--text); background:var(--panel); }
   .box.dir > .label { position:absolute; top:1px; left:6px; font-weight:650; font-size:12px; color:var(--dim); }
@@ -57,9 +56,13 @@
   .code .p { color:var(--dim); display:inline-block; width:42px; }
   .code .top { background:#7a1d1d !important; color:#fff; font-weight:700; border-left:4px solid var(--hot); }
   .code .top::after { content:'  ◀ jev suspects this line'; color:#ffc9c9; font-weight:400; }
-  footer { position:fixed; bottom:0; left:0; right:0; padding:6px 20px; background:var(--panel); color:var(--dim); font-size:13px; border-top:1px solid var(--line); display:flex; gap:12px; align-items:center; }
-  #legend { display:none; position:fixed; bottom:40px; left:20px; max-width:480px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:12px 14px; font-size:13px; color:var(--text); }
-  @media (max-width:760px) { main { grid-template-columns:1fr; height:auto; } #map { height:60vh; } }
+  .mapwrap { position:relative; }
+  .mapwrap > button { position:absolute; bottom:16px; z-index:5; box-shadow:0 2px 8px rgba(0,0,0,.5); font-size:13px; padding:5px 12px; }
+  button.subtle { background:rgba(24,28,34,.9); color:var(--dim); border:1px solid var(--line); font-weight:500; }
+  button.subtle:hover:not(:disabled) { background:var(--panel2); color:var(--text); }
+  #summary { color:var(--dim); font-size:13px; }
+  #legend { display:none; position:absolute; bottom:56px; left:16px; z-index:6; max-width:480px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:12px 14px; font-size:13px; color:var(--text); }
+  @media (max-width:760px) { main { grid-template-columns:1fr; height:auto; } .mapwrap { height:60vh; } }
 </style>
 </head>
 <body>
@@ -70,20 +73,25 @@
   <label>repo <input id="repo" value="repos/pygoat" aria-label="repo path, relative to the experiment folder"></label>
   <label>budget $ <input id="budget" value="0.03" aria-label="max USD for this run"></label>
   <button id="run">Run analysis</button>
+    <span id="summary"></span>
   </div>
   <span id="runStatus"></span>
 </header>
 <main>
-  <div id="map"></div>
-  <aside id="side"><div class="more">No result yet. Pick a repo and press Run analysis.</div></aside>
-</main>
-<footer><button class="ghost" id="showAll">show all</button><button class="ghost" id="toggleLegend">legend</button><span id="summary">no result loaded</span></footer>
-<div id="legend">
+  <div class="mapwrap">
+    <div id="map"></div>
+    <button class="subtle" id="toggleLegend" style="left:16px">legend</button>
+    <button id="showAll" style="right:16px">show all</button>
+    <div id="legend">
   <b>Map</b>: most suspicious first (top-left). One block per file, area = lines of code, color = heat (pale 0 → dark red 1).
   By default only suspected files are shown; "show all" adds the files jev did not flag (grey).<br><br>
   <b>Heat</b>: jev's probabilities weighted by the heat of each category in <code>classification_levels.json</code>.<br><br>
   <b>Code view</b>: shading = probability jev assigns to that line as the place where the vulnerability happens; highlighted = the line jev suspects most.
 </div>
+  </div>
+  <aside id="side"><div class="more">No result yet. Pick a repo and press Run analysis.</div></aside>
+</main>
+
 <script>
 const ink = h => h > 0.7 ? '#fff' : '#1a1010';  // readable text on top of color(h)
 const color = h => `hsl(${50 - h * 50}, 85%, ${80 - h * 42}%)`;
